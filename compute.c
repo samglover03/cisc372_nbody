@@ -9,11 +9,11 @@
 //Side Effect: Modifies the hPos and hVel arrays with the new positions and accelerations after 1 INTERVAL
 void compute(){
 	//make an acceleration matrix which is NUMENTITIES squared in size;
-	int i,j,k;
-	vector3* values=(vector3*)malloc(sizeof(vector3)*NUMENTITIES*NUMENTITIES);
-	vector3** accels=(vector3**)malloc(sizeof(vector3*)*NUMENTITIES);
-	for (i=0;i<NUMENTITIES;i++)
-		accels[i]=&values[i*NUMENTITIES];
+	//int i,j,k;
+	//vector3* values=(vector3*)malloc(sizeof(vector3)*NUMENTITIES*NUMENTITIES);
+	//vector3** accels=(vector3**)malloc(sizeof(vector3*)*NUMENTITIES);
+	//for (i=0;i<NUMENTITIES;i++)
+	//	accels[i]=&values[i*NUMENTITIES];
 	//first compute the pairwise accelerations.  Effect is on the first argument.
 	for (i=0;i<NUMENTITIES;i++){
 		for (j=0;j<NUMENTITIES;j++){
@@ -46,4 +46,27 @@ void compute(){
 	}
 	free(accels);
 	free(values);
+}
+
+__global__ void accelMatrix(vector3** accels, int numEntities) {
+	int index = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx < numEntities){
+		accels[idx] = new vector3[numEntities];
+	}
+}
+
+int main(void){
+	int numEntities = NUMENTITIES
+	vector3* values = new vector3[numEntities*numEntities];
+	vector3** accels;
+
+	cudaMalloc(&accels, sizeof(vector3*)*numEntities);
+	accelMatrix<<<(numEntities + 255) / 256, 256>>>(accels, numEntities);
+	cudaDeviceSynchronize();
+
+	for (int i = 0; i < numEntities; i++){
+		cudaFree(accels[i]);
+	}
+	cudaFree(accels);
+
 }
