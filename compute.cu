@@ -57,5 +57,66 @@ void compute(){
     cudaMalloc((void **)&d_accel_sums, sizeof(vector3) * NUMENTITIES);
 
     dim3 threadsPerBlock(16, 16);
-    dim3 numBlocks((NUMENTITIES + threadsPerBlock.x - 1) / threadsPerBlock.x, (NUMENTITIES + threadsPerBlock
+    dim3 numBlocks((NUMENTITIES + threadsPerBlock.x - 1) / threadsPerBlock.x, (NUMENTITIES + threadsPerBlock.y - 1) / threadsPerBlock.y);
+
+    pairwise_acc<<<numBlocks, threadsPerBlock>>>(d_hPos, d_hVel, d_mass, d_accels);
+    sum_acc<<<(NUMENTITIES + threadsPerBlock.x - 1) / threadsPerBlock.x, threadsPerBlock>>>(d_accels, d_accel_sums);
+
+    cudaMemcpy(accel_sums, d_accel_sums, sizeof(vector3) * NUMENTITIES, cudaMemcpy);
+
+        // Copy accels to device
+    cudaMemcpy(d_accels, accels, sizeof(vector3) * NUMENTITIES * NUMENTITIES, cudaMemcpyHostToDevice);
+
+    // Compute pairwise accelerations
+    pairwise_acc<<<numBlocks, threadsPerBlock>>>(d_hPos, d_hVel, d_mass, d_accels);
+
+    // Sum accelerations for each entity
+    sum_acc<<<(NUMENTITIES + threadsPerBlock.x - 1) / threadsPerBlock.x, threadsPerBlock>>>(d_accels, d_accel_sums);
+
+    // Copy accel_sums back to host
+    cudaMemcpy(accel_sums, d_accel_sums, sizeof(vector3) * NUMENTITIES, cudaMemcpyDeviceToHost);
+
+    // Update velocities and positions
+    for (int i = 0; i < NUMENTITIES; i++){
+        for (int j = 0; j < 3; j++){
+            hVel[i][j] += accel_sums[i][j] * DT;
+            hPos[i][j] += hVel[i][j] * DT;
+        }
+    }
+
+    // Free device memory
+    cudaFree(d_hPos);
+    cudaFree(d_hVel);
+    cudaFree(d_mass);
+    cudaFree(d_accels);
+    cudaFree(d_accel_sums);
+}
+
+int main(){
+    // Allocate host memory
+    hPos = (vector3*)malloc(sizeof(vector3) * NUMENTITIES);
+    hVel = (vector3*)malloc(sizeof(vector3) * NUMENTITIES);
+    mass = (double*)malloc(sizeof(double) * NUMENTITIES);
+    accel_sums = (vector3*)malloc(sizeof(vector3) * NUMENTITIES);
+
+    // Initialize entities
+    for (int i = 0; i < NUMENTITIES; i++){
+        FILL_VECTOR(hPos[i], (double)rand()/(double)RAND_MAX - 0.5, (double)rand()/(double)RAND_MAX - 0.5, (double)rand()/(double)RAND_MAX - 0.5);
+        FILL_VECTOR(hVel[i], 0, 0, 0);
+        mass[i] = (double)rand()/(double)RAND_MAX * MASS_RANGE + MIN_MASS;
+    }
+
+    // Run simulation
+    for (int i = 0; i < NUMSTEPS; i++){
+        compute();
+    }
+
+    // Free host memory
+    free(hPos);
+    free(hVel);
+    free(mass);
+    free(accel_sums);
+
+    return 0;
+}
 }
