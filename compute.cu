@@ -1,64 +1,105 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <math.h>
 #include "vector.h"
 #include "config.h"
 
-#define BLOCK_SIZE 256
-
-__global__ void compute_kernel(vector3* dPos, vector3* dVel, double* dMass, int numEntities, double interval) {
+__global__ void compute_kernel(double* hPos, double* hVel, double* mass) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < numEntities) {
-        vector3 accel_sum = {0, 0, 0};
-        for (int j = 0; j < numEntities; j++) {
-            if (i != j) {
-                vector3 distance;
-                for (int k = 0; k < 3; k++) {
-                    distance[k] = dPos[j][k] - dPos[i][k];
-                }
-                double magnitude_sq = distance[0] * distance[0] + distance[1] * distance[1] + distance[2] * distance[2];
-                double magnitude = sqrt(magnitude_sq);
-                double accelmag = -1 * GRAV_CONSTANT * dMass[j] / magnitude_sq;
-                accel_sum[0] += accelmag * distance[0] / magnitude;
-                accel_sum[1] += accelmag * distance[1] / magnitude;
-                accel_sum[2] += accelmag * distance[2] / magnitude;
+    if (i >= NUMENTITIES) {
+        return;
+    }
+
+    // Make an acceleration matrix which is NUMENTITIES squared in size
+    double* values = (double*)malloc(sizeof(double) * NUMENTITIES * NUMENTITIES);
+    double** accels = (double**)malloc(sizeof(double*) * NUMENTITIES);
+    for (int j = 0; j < NUMENTITIES; j++) {
+        accels[j] = &values[j * NUMENTITIES];
+    }
+
+    // First compute the pairwise accelerations. Effect is on the first argument.
+    for (int j = 0; j < NUMENTITIES; j++) {
+        if (i == j) {
+            for (int k = 0; k < 3; k++) {
+                accels[i][j * 3 + k] = 0;
+            }
+        } else {
+            double distance[3];
+            for (int k = 0; k < 3; k++) {
+                distance[k] = hPos[i * 3 + k] - hPos[j * 3 + k];
+            }
+            double magnitude_sq = distance[0] * distance[0] + distance[1] * distance[1] + distance[2] * distance[2];
+            double magnitude = sqrt(magnitude_sq);
+            double accelmag = -1 * GRAV_CONSTANT * mass[j] / magnitude_sq;
+            for (int k = 0; k < 3; k++) {
+                accels[i][j * 3 + k] = accelmag * distance[k] / magnitude;
             }
         }
-        dVel[i][0] += accel_sum[0] * interval;
-        dVel[i][1] += accel_sum[1] * interval;
-        dVel[i][2] += accel_sum[2] * interval;
-        dPos[i][0] += dVel[i][0] * interval;
-        dPos[i][1] += dVel[i][1] * interval;
-        dPos[i][2] += dVel[i][2] * interval;
     }
+
+    // Sum up the rows of our matrix to get effect on each entity, then update velocity and position
+    double accel_sum[3] = {0};
+    for (int j = 0; j < NUMENTITIES; j++) {
+        for (int k = 0; k < 3; k++) {
+            accel_sum[k] += accels[i][j * 3 + k];
+        }
+    }
+    // Compute the new velocity based on the acceleration and time interval
+    // Compute the new position based on the velocity and time interval
+    for (int k = 0; k < 3; k++) {
+        hVel[i * 3 + k] += accel_sum[k] * INTERVAL;
+        hPos[i * 3 + k] += hVel[i * 3 + k] * INTERVAL;
+    }
+
+    free(accels);
+    free(values);
 }
 
-void compute(){
-    //make an acceleration matrix which is NUMENTITIES squared in size;
+void compute() {
     int i, j, k;
-    vector3* values = (vector3*) malloc(sizeof(vector3) * NUMENTITIES * NUMENTITIES);
-    vector3 **d_accels, **h_accels = (vector3**) malloc(sizeof(vector3*) * NUMENTITIES);
-    cudaMalloc((void**) &d_accels, sizeof(vector3*) * NUMENTITIES);
-    cudaMalloc((void**) &h_accels[0], sizeof(vector3) * NUMENTITIES * NUMENTITIES);
+    double distance_x, distance_y, distance_z, magnitude_sq, magnitude, accelmag;
+    vector3 accel_sum = {0, 0, 0};
+    vector3 *d_accels, *h_values;
+    vector3 **d_accels_ptrs, **h_accels_ptrs;
+
+    // Allocate memory for host and device matrices
+    h_values = (vector3 *) malloc(sizeof(vector3) * NUMENTITIES * NUMENTITIES);
+    h_accels_ptrs = (vector3 **) malloc(sizeof(vector3 *) * NUMENTITIES);
+    cudaMalloc(&d_accels, sizeof(vector3) * NUMENTITIES * NUMENTITIES);
+    cudaMalloc(&d_accels_ptrs, sizeof(vector3 *) * NUMENTITIES);
+
+    // Set up pointers for 2D array on host and device
     for (i = 0; i < NUMENTITIES; i++) {
-        h_accels[i] = &h_accels[0][i * NUMENTITIES];
-        cudaMemcpy(d_accels + i, h_accels + i, sizeof(vector3*), cudaMemcpyHostToDevice);
+        h_accels_ptrs[i] = &h_values[i * NUMENTITIES];
     }
-    //first compute the pairwise accelerations.  Effect is on the first argument.
-    dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 dimGrid((NUMENTITIES + dimBlock.x - 1) / dimBlock.x, (NUMENTITIES + dimBlock.y - 1) / dimBlock.y);
-    pairwise_accel<<<dimGrid, dimBlock>>>(d_accels, hPos, mass);
-    cudaDeviceSynchronize();
-    //sum up the rows of our matrix to get effect on each entity, then update velocity and position.
+    cudaMemcpy(d_accels_ptrs, h_accels_ptrs, sizeof(vector3 *) * NUMENTITIES, cudaMemcpyHostToDevice);
+
+    // Compute pairwise accelerations on device
+    dim3 grid(NUMENTITIES, 1, 1);
+    dim3 block(NUMENTITIES, 1, 1);
+    pairwise_accel<<<grid, block>>>(d_accels, d_accels_ptrs, hPos, mass, GRAV_CONSTANT, NUMENTITIES);
+
+    // Copy results from device to host
+    cudaMemcpy(h_values, d_accels, sizeof(vector3) * NUMENTITIES * NUMENTITIES, cudaMemcpyDeviceToHost);
+
+    // Compute total acceleration for each entity and update position and velocity
     for (i = 0; i < NUMENTITIES; i++) {
-        vector3 accel_sum = {0, 0, 0};
+        accel_sum.x = 0;
+        accel_sum.y = 0;
+        accel_sum.z = 0;
         for (j = 0; j < NUMENTITIES; j++) {
-            accel_sum.x += h_accels[i][j].x;
-            accel_sum.y += h_accels[i][j].y;
-            accel_sum.z += h_accels[i][j].z;
+            distance_x = hPos[i].x - hPos[j].x;
+            distance_y = hPos[i].y - hPos[j].y;
+            distance_z = hPos[i].z - hPos[j].z;
+            magnitude_sq = distance_x * distance_x + distance_y * distance_y + distance_z * distance_z;
+            if (i != j) {
+                magnitude = sqrt(magnitude_sq);
+                accelmag = -1 * GRAV_CONSTANT * mass[j] / magnitude_sq;
+                accel_sum.x += accelmag * distance_x / magnitude;
+                accel_sum.y += accelmag * distance_y / magnitude;
+                accel_sum.z += accelmag * distance_z / magnitude;
+            }
         }
-        //compute the new velocity based on the acceleration and time interval
-        //compute the new position based on the velocity and time interval
+        // Update velocity and position on host
         hVel[i].x += accel_sum.x * INTERVAL;
         hVel[i].y += accel_sum.y * INTERVAL;
         hVel[i].z += accel_sum.z * INTERVAL;
@@ -66,8 +107,10 @@ void compute(){
         hPos[i].y += hVel[i].y * INTERVAL;
         hPos[i].z += hVel[i].z * INTERVAL;
     }
+
+    // Free memory on host and device
+    free(h_values);
+    free(h_accels_ptrs);
     cudaFree(d_accels);
-    cudaFree(h_accels[0]);
-    free(h_accels);
-    free(values);
+    cudaFree(d_accels_ptrs);
 }
