@@ -3,7 +3,7 @@
 #include "vector.h"
 #include "config.h"
 
-__global__ void compute_kernel(double* hPos, double* hVel, double* mass, vector3* accels) {
+__global__ void compute_kernel(vector3* hPos, vector3* hVel, double* mass, vector3* accels) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int j = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -12,7 +12,9 @@ __global__ void compute_kernel(double* hPos, double* hVel, double* mass, vector3
         return;
     }
     vector3 distance;
-	for (int k=0;k<3;k++) distance[k]=hPos[i][k]-hPos[j][k];
+	for (int k=0;k<3;k++) {
+        distance[k]=hPos[i][k]-hPos[j][k];
+    }
 	double magnitude_sq=distance[0]*distance[0]+distance[1]*distance[1]+distance[2]*distance[2];
 	double magnitude=sqrt(magnitude_sq);
 	double accelmag=-1*GRAV_CONSTANT*mass[j]/magnitude_sq;
