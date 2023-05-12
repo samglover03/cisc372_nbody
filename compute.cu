@@ -11,6 +11,7 @@ __global__ void compute_kernel(double* hPos, double* hVel, double* mass, vector3
         FILL_VECTOR(accels[i * NUMENTITIES + j], 0, 0, 0);
         return;
     }
+}
 
     vector3 distance;
 	for (k=0;k<3;k++) distance[k]=hPos[i][k]-hPos[j][k];
@@ -28,12 +29,11 @@ __global__ void sum(vector3 *accels, vector3 *accel_sum, vector3 *dPos, vector3 
                 accel_sum[k] += accels[(i * NUMENTITIES) + j][k];
             }
         }
-        
         // Compute the new velocity based on the acceleration and time interval
         // Compute the new position based on the velocity and time interval
         for (int k = 0; k < 3; k++) {
             dVel[i][k] += accel_sum[i][k] * INTERVAL;
-            dPos[i][k] += dVel[i][k] * INTERVAL;
+            dPos[i][k] += dVel[i][k] * INTERVAL; 
         }
     }
 }
