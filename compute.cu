@@ -7,18 +7,20 @@ __global__ void compute_kernel(vector3* hPos, vector3* hVel, double* mass, vecto
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int j = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (i == j){
-        FILL_VECTOR(accels[i * NUMENTITIES + j], 0, 0, 0);
-        return;
+    if (i < NUMENTITIES && j < NUMENTITIES){
+        if (i == j){
+            FILL_VECTOR(accels[i * NUMENTITIES + j], 0, 0, 0);
+            return;
+        }
+        vector3 distance;
+	    for (int k=0;k<3;k++) {
+            distance[k]=hPos[i][k]-hPos[j][k];
+        }
+	    double magnitude_sq=distance[0]*distance[0]+distance[1]*distance[1]+distance[2]*distance[2];
+	    double magnitude=sqrt(magnitude_sq);
+	    double accelmag=-1*GRAV_CONSTANT*mass[j]/magnitude_sq;
+	    FILL_VECTOR(accels[i * NUMENTITIES + j],accelmag*distance[0]/magnitude,accelmag*distance[1]/magnitude,accelmag*distance[2]/magnitude);
     }
-    vector3 distance;
-	for (int k=0;k<3;k++) {
-        distance[k]=hPos[i][k]-hPos[j][k];
-    }
-	double magnitude_sq=distance[0]*distance[0]+distance[1]*distance[1]+distance[2]*distance[2];
-	double magnitude=sqrt(magnitude_sq);
-	double accelmag=-1*GRAV_CONSTANT*mass[j]/magnitude_sq;
-	FILL_VECTOR(accels[i * NUMENTITIES + j],accelmag*distance[0]/magnitude,accelmag*distance[1]/magnitude,accelmag*distance[2]/magnitude);
 }
 
 __global__ void sum(vector3 *accels, vector3 *accel_sum, vector3 *dPos, vector3 *dVel) {
@@ -43,11 +45,9 @@ void compute() {
     double *dmass;
     vector3 *dhPos, *dhVel, *dacc, *dsum;
 
-	int block = ceilf(NUMENTITIES / 16.0f);
-	int thread = ceilf(NUMENTITIES / (float) block);
-
-	dim3 gridDim(block, block, 1);
-	dim3 blockDim(thread, thread, 1);
+	dim3 threadsPerBlock(16, 16);
+	dim3 numBlocks((NUMENTITIES + threadsPerBlock.x - 1) / threadsPerBlock.x, 
+    (NUMENTITIES + threadsPerBlock.y - 1) / threadsPerBlock.y);
 
 	cudaMalloc((void**) &dmass, sizeof(double) * NUMENTITIES);
 	cudaMalloc((void**) &dhPos, sizeof(vector3) * NUMENTITIES);
@@ -59,10 +59,10 @@ void compute() {
 	cudaMemcpy(dhPos, hPos, sizeof(vector3)*NUMENTITIES, cudaMemcpyHostToDevice);
 	cudaMemcpy(dhVel, hVel, sizeof(vector3)*NUMENTITIES, cudaMemcpyHostToDevice);
 	
-	compute_kernel<<<gridDim, blockDim>>>(dhPos, dhVel, dmass, dacc);
+	compute_kernel<<<threadsPerBlock, numBlocks>>>(dhPos, dhVel, dmass, dacc);
 	cudaDeviceSynchronize();
 
-	sum<<<gridDim.x, blockDim.x>>>(dacc, dsum, dhPos, dhVel);
+	sum<<<threadsPerBlock.x, numBlocks.x>>>(dacc, dsum, dhPos, dhVel);
 	cudaDeviceSynchronize();
 
 	cudaMemcpy(hPos, dhPos, sizeof(vector3)*NUMENTITIES, cudaMemcpyDeviceToHost);
