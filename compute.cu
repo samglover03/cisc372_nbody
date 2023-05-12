@@ -12,7 +12,7 @@ __global__ void compute_kernel(double* hPos, double* hVel, double* mass, vector3
         return;
     }
     vector3 distance;
-	for (k=0;k<3;k++) distance[k]=hPos[i][k]-hPos[j][k];
+	for (int k=0;k<3;k++) distance[k]=hPos[i][k]-hPos[j][k];
 	double magnitude_sq=distance[0]*distance[0]+distance[1]*distance[1]+distance[2]*distance[2];
 	double magnitude=sqrt(magnitude_sq);
 	double accelmag=-1*GRAV_CONSTANT*mass[j]/magnitude_sq;
@@ -25,7 +25,7 @@ __global__ void sum(vector3 *accels, vector3 *accel_sum, vector3 *dPos, vector3 
         FILL_VECTOR(accel_sum[i], 0, 0, 0);
         for (int j = 0; j < NUMENTITIES; j++) {
             for (int k = 0; k < 3; k++) {
-                accel_sum[k] += accels[(i * NUMENTITIES) + j][k];
+                accel_sum[i][k] += accels[(i * NUMENTITIES) + j][k];
             }
         }
         // Compute the new velocity based on the acceleration and time interval
@@ -57,7 +57,7 @@ void compute() {
 	cudaMemcpy(dhPos, hPos, sizeof(vector3)*NUMENTITIES, cudaMemcpyHostToDevice);
 	cudaMemcpy(dhVel, hVel, sizeof(vector3)*NUMENTITIES, cudaMemcpyHostToDevice);
 	
-	compute_kernel<<<gridDim, blockDim>>>(dhPos, dacc, dmass);
+	compute_kernel<<<gridDim, blockDim>>>(dhPos, dhVel, dmass, dacc);
 	cudaDeviceSynchronize();
 
 	sum<<<gridDim.x, blockDim.x>>>(dacc, dsum, dhPos, dhVel);
